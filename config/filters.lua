@@ -1,6 +1,14 @@
--- الأجزاء اللي اكتشفناها في الماب اللي بتسبب لاغ وتمشي بعيد
-local Blacklist = {
-    "BoltBackPart", "BoltPart", "Chamber", "Compensator", 
-    "Mag", "Muzzle", "MeshPart", "lanterninha", "vamos"
+local Filters = {
+    PartBlacklist = {
+        "BoltBackPart", "BoltPart", "Chamber", "Compensator",
+        "Mag", "Muzzle", "MeshPart", "lanterninha", "vamos"
+    },
+    IgnoredServices = {
+        "CoreGui", "Chat", "InsertService", "SocialService"
+    },
+    KeywordWhitelist = {},
+    RemoteIgnoreList = {},
+    AutoIgnore = true
 }
-return Blacklist
+
+return Filters
