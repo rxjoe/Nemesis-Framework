@@ -1,123 +1,125 @@
 local Players = game:GetService("Players")
 
-local Mapper = {}
-Mapper.__index = Mapper
+local StateWatcher = {}
+StateWatcher.__index = StateWatcher
 
-Mapper.ScannedProfiles = {}
+StateWatcher.Config = {
+    IgnoreNoise = true,
+    MinimumChangeThreshold = 0.5,
+    WatchLeaderstats = true,
+    WatchAttributes = false,
+    MaxLogs = 200,
+    ScanDepth = 3
+}
 
-function Mapper:Analyze(character)
-    if not character then
-        character = Players.LocalPlayer and Players.LocalPlayer.Character
-        if not character then
-            return {Type = "NoCharacter", Parts = {}, Target = nil}
-        end
-    end
+StateWatcher.Connections = {}
+StateWatcher.Logs = {}
+StateWatcher.Snapshots = {}
 
-    local profile = {
-        Type = "Unknown",
-        Parts = {},
-        Target = nil,
-        BonePositions = {},
-        SpecialParts = {}
-    }
-
-    if character:FindFirstChild("UpperTorso") then
-        profile.Type = "R15"
-        profile.Target = character:FindFirstChild("Head") or character:FindFirstChild("UpperTorso")
-        for _, boneName in ipairs({"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand", "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot"}) do
-            local part = character:FindFirstChild(boneName)
-            if part then
-                profile.BonePositions[boneName] = part.Position
-            end
-        end
-    elseif character:FindFirstChild("Torso") then
-        profile.Type = "R6"
-        profile.Target = character:FindFirstChild("Head") or character:FindFirstChild("Torso")
-        for _, boneName in ipairs({"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}) do
-            local part = character:FindFirstChild(boneName)
-            if part then
-                profile.BonePositions[boneName] = part.Position
-            end
-        end
-    else
-        profile.Type = "Custom"
-        profile.Target = character:FindFirstChildWhichIsA("BasePart")
-        for _, p in ipairs(character:GetChildren()) do
-            if p:IsA("BasePart") then
-                table.insert(profile.SpecialParts, {Name = p.Name, Position = p.Position, Size = p.Size})
-            end
-        end
-    end
-
-    for _, p in ipairs(character:GetDescendants()) do
-        if p:IsA("BasePart") and not p:IsA("Accessory") then
-            table.insert(profile.Parts, {
-                Name = p.Name,
-                Class = p.ClassName,
-                Size = p.Size,
-                Position = p.Position,
-                Mass = p:IsA("Part") and p.Mass or nil
-            })
-        end
-    end
-
-    profile.TotalParts = #profile.Parts
-    profile.AveragePartSize = Vector3.new(0, 0, 0)
-    if #profile.Parts > 0 then
-        local sum = Vector3.new(0, 0, 0)
-        for _, p in ipairs(profile.Parts) do
-            sum = sum + p.Size
-        end
-        profile.AveragePartSize = sum / #profile.Parts
-    end
-
-    table.insert(self.ScannedProfiles, profile)
-    return profile
+function StateWatcher:Init(logger)
+    self.Logger = logger or {Warn = warn, Info = print}
+    self.LocalPlayer = Players.LocalPlayer
+    return self
 end
 
-function Mapper:GetHumanoid()
-    local player = Players.LocalPlayer
-    if not player or not player.Character then return nil end
-    return player.Character:FindFirstChildWhichIsA("Humanoid")
-end
+function StateWatcher:StartMonitoring()
+    self.Logger:Info("[StateWatcher] Starting Dynamic State Monitoring...")
+    table.clear(self.Logs)
+    self:DisconnectAll()
 
-function Mapper:DetectRigType(character)
-    if character:FindFirstChild("UpperTorso") then return "R15" end
-    if character:FindFirstChild("Torso") then return "R6" end
-    return "Custom"
-end
-
-function Mapper:FindHead(character)
-    local head = character:FindFirstChild("Head")
-    if not head then
-        for _, p in ipairs(character:GetChildren()) do
-            if p:IsA("BasePart") and (p.Name:lower():find("head") or p.Size.Y > 1) then
-                head = p
-                break
-            end
+    if self.Config.WatchLeaderstats and self.LocalPlayer then
+        self.LocalPlayer.CharacterAdded:Connect(function(char)
+            task.wait(1)
+            local stats = char:FindFirstChild("leaderstats")
+            if stats then self:WatchValueGroup(stats, "LocalLeaderstats") end
+        end)
+        if self.LocalPlayer.Character then
+            local stats = self.LocalPlayer.Character:FindFirstChild("leaderstats")
+            if stats then self:WatchValueGroup(stats, "LocalLeaderstats") end
         end
     end
-    return head
+
+    self:ScanAndWatch(game:GetService("ReplicatedStorage"), "RS", 0)
 end
 
-function Mapper:GetCharacterBounds(character)
-    if not character then return nil end
-    local humanoid = character:FindFirstChildWhichIsA("Humanoid")
-    if humanoid then
-        local root = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso")
-        if root then return root.Size end
+function StateWatcher:ScanAndWatch(parent, path, depth)
+    if depth > self.Config.ScanDepth then return end
+    if not parent then return end
+
+    for _, obj in ipairs(parent:GetChildren()) do
+        local currentPath = path .. "." .. obj.Name
+        if obj:IsA("IntValue") or obj:IsA("NumberValue") or obj:IsA("StringValue") or obj:IsA("BoolValue") then
+            self:WatchSingleValue(obj, currentPath)
+        elseif obj:IsA("Folder") and not obj.Name:find("Sound") and not obj.Name:find("Anim") then
+            self:ScanAndWatch(obj, currentPath, depth + 1)
+        end
     end
-    local parts = {}
-    for _, p in ipairs(character:GetDescendants()) do
-        if p:IsA("BasePart") then table.insert(parts, p) end
-    end
-    if #parts == 0 then return Vector3.new(2, 2, 1) end
-    local min, max = parts[1].Position, parts[1].Position
-    for _, p in ipairs(parts) do
-        min = Vector3.new(math.min(min.X, p.Position.X), math.min(min.Y, p.Position.Y), math.min(min.Z, p.Position.Z))
-        max = Vector3.new(math.max(max.X, p.Position.X), math.max(max.Y, p.Position.Y), math.max(max.Z, p.Position.Z))
-    end
-    return max - min
 end
 
-return Mapper
+function StateWatcher:WatchValueGroup(folder, groupName)
+    for _, obj in ipairs(folder:GetChildren()) do
+        if obj:IsA("IntValue") or obj:IsA("NumberValue") then
+            self:WatchSingleValue(obj, groupName .. "." .. obj.Name)
+        end
+    end
+end
+
+function StateWatcher:WatchSingleValue(valueObj, fullPath)
+    self.Snapshots[fullPath] = valueObj.Value
+
+    local connection = valueObj.Changed:Connect(function(newValue)
+        local oldValue = self.Snapshots[fullPath]
+
+        if self.Config.IgnoreNoise and typeof(newValue) == "number" then
+            if math.abs(newValue - oldValue) < self.Config.MinimumChangeThreshold then return end
+        end
+
+        local logEntry = {
+            Time = os.clock(),
+            Path = fullPath,
+            OldValue = oldValue,
+            NewValue = newValue,
+            Delta = (typeof(newValue) == "number") and (newValue - oldValue) or nil
+        }
+
+        table.insert(self.Logs, 1, logEntry)
+        if #self.Logs > self.Config.MaxLogs then table.remove(self.Logs) end
+
+        local alertType = "[STATE]"
+        if logEntry.Delta and logEntry.Delta > self.Config.MinimumChangeThreshold * 10 then
+            alertType = "[ANOMALY!]"
+            self.Logger:Warn(string.format("%s %s: %s -> %s (Delta: %+g)", alertType, fullPath, tostring(oldValue), tostring(newValue), logEntry.Delta))
+        else
+            self.Logger:Info(string.format("%s %s: %s -> %s", alertType, fullPath, tostring(oldValue), tostring(newValue)))
+        end
+
+        self.Snapshots[fullPath] = newValue
+    end)
+
+    table.insert(self.Connections, connection)
+end
+
+function StateWatcher:TakeSnapshot()
+    self.Logger:Info("[StateWatcher] Snapshot taken.")
+end
+
+function StateWatcher:CompareWithSnapshot(snapshotTime)
+    local changes = {}
+    for _, log in ipairs(self.Logs) do
+        if log.Time >= snapshotTime then table.insert(changes, log) end
+    end
+    return changes
+end
+
+function StateWatcher:DisconnectAll()
+    for _, conn in ipairs(self.Connections) do
+        if conn and typeof(conn) == "RBXScriptConnection" then
+            pcall(function() conn:Disconnect() end)
+        end
+    end
+    table.clear(self.Connections)
+    table.clear(self.Snapshots)
+    self.Logger:Info("[StateWatcher] Connections cleared.")
+end
+
+return StateWatcher
