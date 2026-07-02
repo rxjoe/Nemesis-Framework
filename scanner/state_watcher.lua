@@ -1,168 +1,123 @@
--- ==========================================
--- scanner/state_watcher.lua
--- وظيفته: المراقبة الديناميكية لحالة اللعبة (State Mutation Monitoring)
--- يكتشف التغيرات الصامتة اللي مبتعملش Error بس بتغير الداتا
--- ==========================================
-
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local StateWatcher = {}
-StateWatcher.__index = StateWatcher
+local Mapper = {}
+Mapper.__index = Mapper
 
--- إعدادات التصفية (مهمة جداً عشان الـ Lag)
-StateWatcher.Config = {
-    IgnoreNoise = true,           -- تجاهل التغيرات الصغيرة جداً (الضوضاء)
-    MinimumChangeThreshold = 0.5, -- أقل تغير يسجل (مثلاً لو الفلوس اتغيرت 0.1 مش هيسجلها، لو اتغيرت 10 هيسجلها)
-    WatchLeaderstats = true,      -- مراقبة الفلوس والـ Stats الافتراضية
-    WatchAttributes = false,       -- مراقبة الـ Attributes (ممكن تسبب لاج في بعض المابات السيئة)
-    MaxLogs = 50                  -- أقصى عدد التغيرات اللي يحفظها في الذاكرة
-}
+Mapper.ScannedProfiles = {}
 
-StateWatcher.Connections = {} -- جدول لحفظ الـ Events عشان نقدر نوقفها لما نريد (Prevent Memory Leaks)
-StateWatcher.Logs = {}       -- سجل التغيرات اللي حصلت
+function Mapper:Analyze(character)
+    if not character then
+        character = Players.LocalPlayer and Players.LocalPlayer.Character
+        if not character then
+            return {Type = "NoCharacter", Parts = {}, Target = nil}
+        end
+    end
 
-function StateWatcher:Init(logger)
-    self.Logger = logger or {Warn = warn, Info = print}
-    self.LocalPlayer = Players.LocalPlayer
-    self.Snapshots = {} -- لقطات سريعة للقيم الحالية
-    return self
-end
+    local profile = {
+        Type = "Unknown",
+        Parts = {},
+        Target = nil,
+        BonePositions = {},
+        SpecialParts = {}
+    }
 
--- دالة التهيئة: تبدأ تراقب اللاعب نفسه والقيم العامة
-function StateWatcher:StartMonitoring()
-    self.Logger.Info("[StateWatcher] Initializing Dynamic State Monitoring...")
-    table.clear(self.Logs)
-    self:DisconnectAll() -- نظف الاتصالات القديمة أول حاجة
-
-    -- 1. مراقبة الـ Leaderstats (الفلوس، المستوى، الخ)
-    if self.Config.WatchLeaderstats then
-        self.LocalPlayer.CharacterAdded:Connect(function(char)
-            task.wait(1) -- ننتظر الـ Character يكتمل
-            local stats = char:FindFirstChild("leaderstats")
-            if stats then
-                self:WatchValueGroup(stats, "LocalLeaderstats")
-            end
-        end)
-        
-        -- لو اللاعب موجود بالفعل
-        if self.LocalPlayer.Character then
-            local stats = self.LocalPlayer.Character:FindFirstChild("leaderstats")
-            if stats then
-                self:WatchValueGroup(stats, "LocalLeaderstats")
+    if character:FindFirstChild("UpperTorso") then
+        profile.Type = "R15"
+        profile.Target = character:FindFirstChild("Head") or character:FindFirstChild("UpperTorso")
+        for _, boneName in ipairs({"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand", "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot"}) do
+            local part = character:FindFirstChild(boneName)
+            if part then
+                profile.BonePositions[boneName] = part.Position
             end
         end
-    end
-
-    -- 2. مراقبة الـ ReplicatedStorage للقيم العالمية (لو لقينا)
-    self:ScanAndWatch(RS, "GlobalState", 0)
-end
-
--- دالة عودية (Recursive) تدور على القيم وتعملها مراقبة
-function StateWatcher:ScanAndWatch(parent, path, depth)
-    if depth > 2 then return end -- منع اللاغ، لا ننزل أكتر من مستويين
-    
-    for _, obj in ipairs(parent:GetChildren()) do
-        local currentPath = path .. "." .. obj.Name
-        
-        if obj:IsA("IntValue") or obj:IsA("NumberValue") or obj:IsA("StringValue") or obj:IsA("BoolValue") then
-            self:WatchSingleValue(obj, currentPath)
-        elseif obj:IsA("Folder") and obj.Name ~= "Sounds" and obj.Name ~= "Animations" then
-            -- لو كان فولدر، ادخل جوه دور
-            self:ScanAndWatch(obj, currentPath, depth + 1)
-        end
-    end
-end
-
--- مراقبة مجموعة قيم (زي الـ leaderstats)
-function StateWatcher:WatchValueGroup(folder, groupName)
-    for _, obj in ipairs(folder:GetChildren()) do
-        if obj:IsA("IntValue") or obj:IsA("NumberValue") then
-            self:WatchSingleValue(obj, groupName .. "." .. obj.Name)
-        end
-    end
-end
-
--- === قلب الملف: دالة مراقبة القيمة الواحدة ===
-function StateWatcher:WatchSingleValue(valueObj, fullPath)
-    -- نحفظ القيمة الأصلية كلقطة سريعة (Snapshot)
-    self.Snapshots[fullPath] = valueObj.Value
-    
-    -- إنشاء الاتصال (Connection)
-    local connection
-    connection = valueObj.Changed:Connect(function(newValue)
-        local oldValue = self.Snapshots[fullPath]
-        
-        -- 1. فلتر التغييرات الصغيرة (Noise Filtering)
-        if self.Config.IgnoreNoise and typeof(newValue) == "number" then
-            local delta = math.abs(newValue - oldValue)
-            if delta < self.Config.MinimumChangeThreshold then
-                return -- التجاهل، التغير صغير جداً (ضوضاء)
+    elseif character:FindFirstChild("Torso") then
+        profile.Type = "R6"
+        profile.Target = character:FindFirstChild("Head") or character:FindFirstChild("Torso")
+        for _, boneName in ipairs({"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}) do
+            local part = character:FindFirstChild(boneName)
+            if part then
+                profile.BonePositions[boneName] = part.Position
             end
         end
-        
-        -- 2. تسجيل التغيير في الذاكرة
-        local logEntry = {
-            Time = os.clock(),
-            Path = fullPath,
-            OldValue = oldValue,
-            NewValue = newValue,
-            Delta = (typeof(newValue) == "number") and (newValue - oldValue) or nil
-        }
-        
-        table.insert(self.Logs, 1, logEntry) -- نحط الجديد فوق
-        if #self.Logs > self.Config.MaxLogs then
-            table.remove(self.Logs) -- نشيل القديم من تحت
-        end
-        
-        -- 3. طباعة التنبيه في الكونسل
-        local alertType = "[STATE CHANGE]"
-        local deltaStr = logEntry.Delta and string.format(" (Delta: %+g)", logEntry.Delta) or ""
-        
-        -- تحذير خاص لو القيمة اتزودت من غير مبرر (مثلاً فلوس incremented بدون سبب واضح)
-        if logEntry.Delta and logEntry.Delta > self.Config.MinimumChangeThreshold * 10 then
-            alertType = "[ANOMALY DETECTED]" -- تغير مفاجئ كبير
-            self.Logger.Warn(string.format("%s %s%s -> %s%s", alertType, fullPath, tostring(oldValue), tostring(newValue), deltaStr))
-        else
-            self.Logger.Info(string.format("%s %s%s -> %s%s", alertType, fullPath, tostring(oldValue), tostring(newValue), deltaStr))
-        end
-        
-        -- تحديث الـ Snapshot بالقيمة الجديدة
-        self.Snapshots[fullPath] = newValue
-    end)
-    
-    -- حفظ الـ Connection عشان نقدر نوقفه لما نظف الأداة
-    table.insert(self.Connections, connection)
-end
-
--- دالة مهمة جداً: تاخد لقطة سريعة للداتا الحالية (قبل ما ترسل Payload)
-function StateWatcher:TakeSnapshot()
-    self.Logger.Info("[StateWatcher] Snapshot taken. Send your payload now.")
-    -- الـ Snapshots بتتحدث تلقائياً في الـ WatchSingleValue، بس بنعمل ده عشان نرسل إشارة إننا مستعدين
-end
-
--- دالة مقارنة: تقارن الـ Snapshot اللي قبل الـ Payload بالحالة الحالية
-function StateWatcher:CompareWithSnapshot(snapshotTime)
-    local changes = {}
-    -- هنا بنفلتر الـ Logs عشان نرجع بس اللي حصلت بعد وقت الـ Snapshot
-    for _, log in ipairs(self.Logs) do
-        if log.Time >= snapshotTime then
-            table.insert(changes, log)
+    else
+        profile.Type = "Custom"
+        profile.Target = character:FindFirstChildWhichIsA("BasePart")
+        for _, p in ipairs(character:GetChildren()) do
+            if p:IsA("BasePart") then
+                table.insert(profile.SpecialParts, {Name = p.Name, Position = p.Position, Size = p.Size})
+            end
         end
     end
-    return changes
-end
 
--- تنظيف الذاكرة (Prevent Memory Leaks) - ضروري جداً في المشاريع الكبيرة
-function StateWatcher:DisconnectAll()
-    for _, conn in ipairs(self.Connections) do
-        if conn and typeof(conn) == "RBXScriptConnection" then
-            conn:Disconnect()
+    for _, p in ipairs(character:GetDescendants()) do
+        if p:IsA("BasePart") and not p:IsA("Accessory") then
+            table.insert(profile.Parts, {
+                Name = p.Name,
+                Class = p.ClassName,
+                Size = p.Size,
+                Position = p.Position,
+                Mass = p:IsA("Part") and p.Mass or nil
+            })
         end
     end
-    table.clear(self.Connections)
-    table.clear(self.Snapshots)
-    self.Logger.Info("[StateWatcher] All connections disconnected. Memory cleared.")
+
+    profile.TotalParts = #profile.Parts
+    profile.AveragePartSize = Vector3.new(0, 0, 0)
+    if #profile.Parts > 0 then
+        local sum = Vector3.new(0, 0, 0)
+        for _, p in ipairs(profile.Parts) do
+            sum = sum + p.Size
+        end
+        profile.AveragePartSize = sum / #profile.Parts
+    end
+
+    table.insert(self.ScannedProfiles, profile)
+    return profile
 end
 
-return StateWatcher
+function Mapper:GetHumanoid()
+    local player = Players.LocalPlayer
+    if not player or not player.Character then return nil end
+    return player.Character:FindFirstChildWhichIsA("Humanoid")
+end
+
+function Mapper:DetectRigType(character)
+    if character:FindFirstChild("UpperTorso") then return "R15" end
+    if character:FindFirstChild("Torso") then return "R6" end
+    return "Custom"
+end
+
+function Mapper:FindHead(character)
+    local head = character:FindFirstChild("Head")
+    if not head then
+        for _, p in ipairs(character:GetChildren()) do
+            if p:IsA("BasePart") and (p.Name:lower():find("head") or p.Size.Y > 1) then
+                head = p
+                break
+            end
+        end
+    end
+    return head
+end
+
+function Mapper:GetCharacterBounds(character)
+    if not character then return nil end
+    local humanoid = character:FindFirstChildWhichIsA("Humanoid")
+    if humanoid then
+        local root = character:FindFirstChild("HumanoidRootPart") or character:FindFirstChild("Torso")
+        if root then return root.Size end
+    end
+    local parts = {}
+    for _, p in ipairs(character:GetDescendants()) do
+        if p:IsA("BasePart") then table.insert(parts, p) end
+    end
+    if #parts == 0 then return Vector3.new(2, 2, 1) end
+    local min, max = parts[1].Position, parts[1].Position
+    for _, p in ipairs(parts) do
+        min = Vector3.new(math.min(min.X, p.Position.X), math.min(min.Y, p.Position.Y), math.min(min.Z, p.Position.Z))
+        max = Vector3.new(math.max(max.X, p.Position.X), math.max(max.Y, p.Position.Y), math.max(max.Z, p.Position.Z))
+    end
+    return max - min
+end
+
+return Mapper
