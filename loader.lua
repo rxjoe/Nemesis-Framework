@@ -1,5 +1,5 @@
--- Nemesis Framework v3.0 Ultimate — Loader
--- الصق الكود ده في الـ executor بتاعك
+-- Nemesis Framework v3.0 Ultimate
+-- الصق الكود ده في الـ executor بتاعك وشغله
 
 local BASE = "https://raw.githubusercontent.com/rxjoe/Nemesis-Framework/main"
 
@@ -27,70 +27,74 @@ local Files = {
     ["ui/controllers/scanner_controller"] = "/ui/controllers/scanner_controller.lua",
 }
 
-local HttpService = game:GetService("HttpService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local NemesisFolder = Instance.new("Folder")
-NemesisFolder.Name = "NemesisFramework"
-NemesisFolder.Parent = ReplicatedStorage
-
-local function createModule(path, source)
-    local parts = path:split("/")
-    local current = NemesisFolder
-    for i, name in ipairs(parts) do
-        local child = current:FindFirstChild(name)
-        if not child then
-            if i == #parts then
-                child = Instance.new("ModuleScript")
-                child.Name = name
-                child.Source = source or ""
-                child.Parent = current
-            else
-                child = Instance.new("Folder")
-                child.Name = name
-                child.Parent = current
-            end
-        end
-        current = child
-    end
-    return current
-end
-
-print("[Nemesis] Downloading framework files...")
-
-local success = true
-for path, url in pairs(Files) do
-    local ok, source = pcall(function()
-        return HttpService:GetAsync(BASE .. url)
+local function getURL(url)
+    local ok, result = pcall(function() return game:HttpGet(url) end)
+    if ok then return result end
+    ok, result = pcall(function()
+        local s = syn.request({Url = url, Method = "GET"})
+        return s and s.Body or ""
     end)
-    if ok then
-        createModule(path, source)
-        print("  [OK] " .. path)
-    else
-        print("  [FAIL] " .. path .. " - " .. tostring(source))
-        success = false
-    end
-    task.wait(0.05)
+    if ok then return result end
+    ok, result = pcall(function()
+        local s = request({Url = url, Method = "GET"})
+        return s and s.Body or ""
+    end)
+    if ok then return result end
+    ok, result = pcall(function()
+        return game:GetService("HttpService"):GetAsync(url)
+    end)
+    if ok then return result end
+    return nil
 end
 
-if success then
-    print("[Nemesis] All files downloaded. Loading framework...")
-    local mainModule = NemesisFolder:FindFirstChild("init")
-    if not mainModule then
-        local ok, initSource = pcall(function()
-            return HttpService:GetAsync(BASE .. "/init.lua")
-        end)
-        if ok then
-            mainModule = Instance.new("ModuleScript")
-            mainModule.Name = "init"
-            mainModule.Source = initSource
-            mainModule.Parent = NemesisFolder
+local RS = game:GetService("ReplicatedStorage")
+local Folder = Instance.new("Folder")
+Folder.Name = "NemesisFramework"
+Folder.Parent = RS
+
+local function Make(path, src)
+    local parts = path:split("/")
+    local cur = Folder
+    for i, name in ipairs(parts) do
+        local child = cur:FindFirstChild(name)
+        if not child then
+            child = (i == #parts) and Instance.new("ModuleScript") or Instance.new("Folder")
+            child.Name = name
+            child.Parent = cur
         end
+        if i == #parts and src then child.Source = src end
+        cur = child
     end
-    if mainModule then
-        local nemesis = require(mainModule)
-        print("[Nemesis] Framework loaded successfully!")
+    return cur
+end
+
+print("[Nemesis] Downloading...")
+local ok = true
+for path, url in pairs(Files) do
+    local src = getURL(BASE .. url)
+    if src then
+        Make(path, src)
+        print("  + " .. path)
+    else
+        warn("  X " .. path)
+        ok = false
+    end
+    task.wait()
+end
+
+local initSrc = getURL(BASE .. "/init.lua")
+if initSrc then
+    local m = Instance.new("ModuleScript")
+    m.Name = "init"
+    m.Source = initSrc
+    m.Parent = Folder
+    print("[Nemesis] Loading framework...")
+    local ok2, result = pcall(function() return require(m) end)
+    if ok2 then
+        print("[Nemesis] Framework loaded! UI should appear.")
+    else
+        warn("[Nemesis] Load error: " .. tostring(result))
     end
 else
-    warn("[Nemesis] Some files failed to download. Check your connection.")
+    warn("[Nemesis] Failed to download init.lua")
 end
