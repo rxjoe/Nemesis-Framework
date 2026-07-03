@@ -1,24 +1,26 @@
+local Root = script.Parent
+
 local Nemesis = {}
 
-Nemesis.Environment = require(script.core:WaitForChild("environment"))
-Nemesis.Signals = require(script.core:WaitForChild("signals"))
-Nemesis.Logger = require(script.core:WaitForChild("logger"))
+Nemesis.Environment = require(Root.core:WaitForChild("environment"))
+Nemesis.Signals = require(Root.core:WaitForChild("signals"))
+Nemesis.Logger = require(Root.core:WaitForChild("logger"))
 
-Nemesis.Config = require(script.config:WaitForChild("settings"))
-Nemesis.Filters = require(script.config:WaitForChild("filters"))
+Nemesis.Config = require(Root.config:WaitForChild("settings"))
+Nemesis.Filters = require(Root.config:WaitForChild("filters"))
 
-Nemesis.StructMapper = require(script.scanner:WaitForChild("struct_mapper"))
-Nemesis.StateWatcher = require(script.scanner:WaitForChild("state_watcher"))
-Nemesis.MemoryScanner = require(script.scanner:WaitForChild("memory_scanner"))
-Nemesis.ArgSniffer = require(script.scanner:WaitForChild("argument_sniffer"))
-Nemesis.UltimateScanner = require(script.scanner:WaitForChild("ultimate_scanner"))
+Nemesis.StructMapper = require(Root.scanner:WaitForChild("struct_mapper"))
+Nemesis.StateWatcher = require(Root.scanner:WaitForChild("state_watcher"))
+Nemesis.MemoryScanner = require(Root.scanner:WaitForChild("memory_scanner"))
+Nemesis.ArgSniffer = require(Root.scanner:WaitForChild("argument_sniffer"))
+Nemesis.UltimateScanner = require(Root.scanner:WaitForChild("ultimate_scanner"))
 
-Nemesis.NetworkSpoofer = require(script.modules:WaitForChild("network_spoofer"))
-Nemesis.PhysicsManipulator = require(script.modules:WaitForChild("physics_manipulator"))
+Nemesis.NetworkSpoofer = require(Root.modules:WaitForChild("network_spoofer"))
+Nemesis.PhysicsManipulator = require(Root.modules:WaitForChild("physics_manipulator"))
 
-Nemesis.Theme = require(script.ui.themes:WaitForChild("default"))
-Nemesis.MainController = require(script.ui.controllers:WaitForChild("main_controller"))
-Nemesis.ScannerController = require(script.ui.controllers:WaitForChild("scanner_controller"))
+Nemesis.Theme = require(Root.ui.themes:WaitForChild("default"))
+Nemesis.MainController = require(Root.ui.controllers:WaitForChild("main_controller"))
+Nemesis.ScannerController = require(Root.ui.controllers:WaitForChild("scanner_controller"))
 
 function Nemesis:Start()
     self.Environment:Init()
